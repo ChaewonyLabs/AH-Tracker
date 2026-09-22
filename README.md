@@ -45,7 +45,11 @@ Fully close ArcheRage before replacing the `ahpricewatch` addon folder or its fi
 
 ## Support
 
-Optional support links are available through the Chaewony Labs GitHub profile.
+AH Tracker is fully functional and free. Donations do not unlock any additional functionality.
+
+If you would like to support continued development:
+
+[Support Chaewony Labs on Ko-fi](https://ko-fi.com/chaewonylabs)
 
 ## License
 
@@ -114,7 +118,11 @@ AH Tracker의 저장 데이터는 애드온 설치 폴더와 별도로 저장되
 
 ## 후원
 
-선택적인 후원 정보는 Chaewony Labs GitHub 프로필에서 확인할 수 있습니다.
+AH Tracker의 모든 기능은 무료로 사용할 수 있으며, 후원 여부에 따라 추가 기능이 해금되지 않습니다.
+
+개발을 후원하고 싶다면:
+
+[Ko-fi에서 Chaewony Labs 후원하기](https://ko-fi.com/chaewonylabs)
 
 ## 라이선스
 
