@@ -4,6 +4,8 @@
 
 AH Tracker is a free ArcheRage Auction House watchlist addon by Chaewony Labs.
 
+**⚠️ AH Tracker requires the `globals` addon to be installed. It will not work without it.**
+
 ## Features
 
 - Track current prices for items on a persistent Auction House Watchlist.
