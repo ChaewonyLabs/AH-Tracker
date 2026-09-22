@@ -63,6 +63,8 @@ Copyright © 2026 Chaewony Labs. All rights reserved. See [LICENSE](LICENSE).
 
 AH Tracker는 Chaewony Labs에서 제작한 무료 ArcheRage 경매장 관심 아이템 추적 애드온입니다.
 
+**⚠️ AH Tracker를 사용하려면 `globals` 애드온이 설치되어 있어야 합니다. `globals`가 없으면 작동하지 않습니다.**
+
 ## 주요 기능
 
 - 관심 아이템의 현재 가격을 추적하고 목록을 저장합니다.
