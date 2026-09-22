@@ -28,9 +28,17 @@ AH Tracker is a free ArcheRage Auction House watchlist addon by Chaewony Labs.
 ## Basic Usage
 
 1. Open the Auction House to use AH Tracker. Turn on **Update on AH Open** to scan the full Watchlist automatically while the Auction House is open.
+
 2. Open **Settings**, choose an item suggestion, and click **Add Item** to put it on the Watchlist.
-3. Select that existing Watchlist row to set a target price in Gold, Silver, and Copper. Click **Apply**, then **Save settings**. The price fields and **Apply** are disabled when no existing item is selected. A zero target disables that item's target alert.
-4. Check the current price, statistics, signal, and scan status in the tracker window. **Scan complete** appears after all Watchlist items update successfully and pending Market requests finish.
+
+3. Target prices are optional. To set one, select an item in your Watchlist, enter the price in Gold, Silver, and Copper, then click **Apply** and **Save settings**.
+If you do not set a target price, AH Tracker will continue to show the item's current price, market statistics, and **Signal** normally. The **Signal** provides a general indication based on market data, so you can use AH Tracker without setting target prices for every item.
+A target price of 0 means that no target price is set for that item.
+
+4. Check the current price, market statistics, Signal, and scan status in the tracker window. **Scan Complete** appears after a successful full Watchlist scan.
+
+If you want to search the Auction House manually while AH Tracker is running, it is recommended to turn **Update on AH open** off. This prevents AH Tracker from starting an automatic update when you open the Auction House for manual searches.
+
 
 ## Market Data
 
@@ -93,9 +101,15 @@ AH Tracker는 Chaewony Labs에서 제작한 무료 ArcheRage 경매장 관심 �
 ## 기본 사용 방법
 
 1. AH Tracker를 사용하려면 경매장을 엽니다. **Update on AH Open**을 켜면 경매장이 열려 있는 동안 전체 관심 목록을 자동으로 스캔합니다.
+
 2. **Settings**를 열고 아이템 검색 결과에서 원하는 아이템을 선택한 뒤 **Add Item**을 눌러 관심 목록에 추가합니다.
-3. 관심 목록에 추가된 아이템을 선택한 뒤 Gold, Silver, Copper 단위로 목표 가격을 설정합니다. **Apply**를 누른 후 **Save settings**를 누릅니다. 기존 관심 아이템이 선택되지 않은 상태에서는 가격 입력칸과 **Apply** 버튼이 비활성화됩니다. 목표 가격을 0으로 설정하면 해당 아이템의 목표 가격 알림이 비활성화됩니다.
-4. 메인 창에서 현재 가격, 통계, Signal, 스캔 상태를 확인할 수 있습니다. 모든 관심 아이템의 업데이트와 대기 중인 Market 요청이 완료되면 **Scan complete**가 표시됩니다.
+
+3. 목표 가격 설정은 선택 사항입니다. Watchlist에서 아이템을 선택하고 Gold, Silver, Copper 단위로 가격을 입력한 뒤 **Apply**와 **Save settings**를 눌러 설정할 수 있습니다.
+   설정하지 않아도 AH Tracker는 해당 아이템의 현재 가격, 시장 통계, **Signal**을 정상적으로 표시합니다. **Signal**은 시장 데이터를 기반으로 대략적인 판단 기준을 제공하므로, 모든 아이템에 별도의 목표값을 지정할 필요는 없습니다.
+   값을 0으로 설정하면 해당 아이템에는 목표 가격이 지정되지 않은 상태로 처리됩니다.
+
+4. Tracker 창에서 현재 가격, 시장 통계, Signal, 스캔 상태를 확인할 수 있습니다. Watchlist 전체 스캔이 정상적으로 완료되면 **Scan Complete**가 표시됩니다.
+
 
 ## Market Data
 
