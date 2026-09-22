@@ -16,13 +16,14 @@ AH Tracker is a free ArcheRage Auction House watchlist addon by Chaewony Labs.
 - Show 8–15 rows per page according to available screen height.
 - Use the UI in English, Japanese, or Korean, with a separate Auction House search language setting.
 
-## Installation
+### Installation
 
-1. Fully close ArcheRage.
-2. Download and extract AH Tracker.
-3. Place the `ahpricewatch` folder under `Documents\ArcheRage\Addon\`.
-4. Confirm the resulting path is `Documents\ArcheRage\Addon\ahpricewatch\toc.g`.
-5. Keep files from a single AH Tracker version together. Do not mix versions.
+1. Make sure the `globals` addon is installed.
+2. Extract the `ahpricewatch` folder into:
+
+   `Documents\ArcheRage\Addon\`
+
+3. Launch ArcheRage and open the Auction House.
 
 ## Basic Usage
 
