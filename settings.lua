@@ -262,7 +262,13 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
         Hide = hide,
         RefreshLanguage = refresh,
         Open = function()
-            if isOpen then return end
+            if isOpen then
+                -- Show alone does not restore native stacking order. Use the
+                -- Show/Raise pattern used by ChoreTracker's sibling windows.
+                panel:Show(true)
+                panel:Raise()
+                return
+            end
             context.visibility(true)
             isOpen = true
             dropdown:Show(false)
@@ -272,6 +278,7 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
             refresh()
             message:SetText(T("draftHint"))
             panel:Show(true)
+            panel:Raise()
         end,
     }
 end

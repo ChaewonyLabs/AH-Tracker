@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.1.1
+-- ArcheRage AH Price Watch v1.1.2
 -- AUTO performs one watchlist scan while the player has native AH open, then
 -- records native/manual searches. Settings and notifications are local only.
 -- Uses the enabled nine-argument SearchAuctionArticle and GetSearchedItem* APIs.
@@ -31,7 +31,7 @@ local settingsOpen = false
 local ITEMS = CONFIG.items or {}
 local DEBUG = CONFIG.DEBUG == true
 local ALERT_COOLDOWN = math.max(0, tonumber(CONFIG.alertCooldownSeconds) or 1800)
-local VERSION = "1.1.1"
+local VERSION = "1.1.2"
 local storage = AH_PRICE_WATCH_STORAGE.New(ADDON)
 
 -- v073 reconstructs the existing in-memory shape from bounded component keys.
@@ -83,8 +83,8 @@ end
 if state.auto == nil then state.auto = false end
 state.tableVisible = false
 if state.language ~= "JA" and state.language ~= "KO" and state.language ~= "EN" then
-    state.language = tostring(CONFIG.defaultLanguage or "JA")
-    if state.language ~= "JA" and state.language ~= "KO" and state.language ~= "EN" then state.language = "JA" end
+    state.language = tostring(CONFIG.defaultLanguage or "EN")
+    if state.language ~= "JA" and state.language ~= "KO" and state.language ~= "EN" then state.language = "EN" end
 end
 
 -- UI language and Auction search language are independent. Only documented

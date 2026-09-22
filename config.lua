@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.1.1
+-- ArcheRage AH Price Watch v1.1.2
 --
 -- AUTO scans once while the player has native AH open, then captures manual
 -- searches. Uses enabled SearchAuctionArticle (9 arguments, all-grade filter 1).
@@ -12,7 +12,7 @@
 -- Prices are per ONE item, not per stack.
 
 AH_PRICE_WATCH_CONFIG = {
-    defaultLanguage = "JA",
+    defaultLanguage = "EN",
     DEBUG = false,
     DEV_MARKET_PROBE = false,
     alertCooldownSeconds = 1800,
