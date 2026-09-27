@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.1.2
+-- ArcheRage AH Price Watch v1.1.3
 -- AUTO performs one watchlist scan while the player has native AH open, then
 -- records native/manual searches. Settings and notifications are local only.
 -- Uses the enabled nine-argument SearchAuctionArticle and GetSearchedItem* APIs.
@@ -31,7 +31,7 @@ local settingsOpen = false
 local ITEMS = CONFIG.items or {}
 local DEBUG = CONFIG.DEBUG == true
 local ALERT_COOLDOWN = math.max(0, tonumber(CONFIG.alertCooldownSeconds) or 1800)
-local VERSION = "1.1.2"
+local VERSION = "1.1.3"
 local storage = AH_PRICE_WATCH_STORAGE.New(ADDON)
 
 -- v073 reconstructs the existing in-memory shape from bounded component keys.
@@ -676,7 +676,8 @@ for i = 1, UI.MAX_PAGE_SIZE do
     rows[i] = row
 end
 
-local scanCompleted, scanCompletionPending = false, false
+local scanCompleted, scanCompletionPending, scanCompletedAt = false, false, nil
+local currentUnavailable = {} -- Session-local display state; retain saved price history.
 local lastUpdateLabel = window:CreateChildWidget("label", "ahPriceWatchLastUpdate", 0, false)
 lastUpdateLabel:SetExtent(240, 18)
 lastUpdateLabel:AddAnchor("TOPLEFT", window, 12, bottomY + 34)
@@ -690,8 +691,15 @@ local function RefreshLastUpdate()
         local last = state.last[item.name]
         latest = math.max(latest, type(last) == "table" and tonumber(last.time) or 0)
     end
-    lastUpdateLabel:SetText(T("lastUpdate") .. " " .. (latest > 0 and TimeText(latest) or "--:--") ..
+    local displayed = scanCompleted and tonumber(scanCompletedAt) or latest
+    if not displayed or displayed <= 0 then displayed = latest end
+    lastUpdateLabel:SetText(T("lastUpdate") .. " " .. (displayed > 0 and TimeText(displayed) or "--:--") ..
         (scanCompleted and ("  " .. T("scanComplete")) or ""))
+end
+
+local function ClearScanCompletion()
+    scanCompleted, scanCompletionPending, scanCompletedAt = false, false, nil
+    RefreshLastUpdate()
 end
 
 -- Display only: keep the shared price formatter and all stored values intact.
@@ -750,7 +758,7 @@ local function RefreshRow(index)
         row.target.style:SetColor(190, 190, 190, 255)
     end
 
-    if type(last) == "table" and tonumber(last.price) ~= nil and tonumber(last.price) > 0 then
+    if not currentUnavailable[item.name] and type(last) == "table" and tonumber(last.price) ~= nil and tonumber(last.price) > 0 then
         local price = tonumber(last.price)
         local signal = SignalFor(index, price, now)
         row.now:SetText(TableMoneyText(price))
@@ -837,6 +845,7 @@ local function RecordPrice(index, priceValue)
     local item = ITEMS[index]
     local price = tonumber(priceValue)
     if item == nil or price == nil or price <= 0 then return false end
+    currentUnavailable[item.name] = nil
     local now = Timestamp()
     local old = state.last[item.name] or {}
 
@@ -1033,6 +1042,7 @@ local side = {
     attempts = 0,
     spacingElapsed = 0,
     eventSeen = false,
+    emptyOnly = true,
     successCount = 0,
     cacheHitCount = 0,
     queryErrorCount = 0,
@@ -1053,11 +1063,18 @@ local function PriceFromSearchedCache(watchIndex)
         page = X2Auction:GetSearchedItemPage()
     end)
     if not ok then return nil, "meta-error" end
-    count = tonumber(count) or 0
-    total = tonumber(total) or 0
-    page = tonumber(page) or 0
+    count, total, page = tonumber(count), tonumber(total), tonumber(page)
+    local function validMetadataNumber(value)
+        return value ~= nil and value >= 0 and value < math.huge and value % 1 == 0
+    end
+    if not validMetadataNumber(count) or not validMetadataNumber(total) or
+        not validMetadataNumber(page) then return nil, "invalid-metadata" end
     if page ~= 1 then return nil, "unexpected-page=" .. tostring(page) end
-    if count <= 0 then return nil, "rows=0 total=" .. tostring(total) .. " page=" .. tostring(page) end
+    if count == 0 then
+        -- A completed search may expose its rows after the completion event.
+        -- Only the scan's bounded deadline can turn this into no listings.
+        return nil, "rows=0 total=" .. tostring(total) .. " page=1", nil, true
+    end
 
     local best, bestInfo = nil, nil
     local tables = 0
@@ -1083,10 +1100,12 @@ local function ResetScanWait()
     side.readElapsed = 0
     side.attempts = 0
     side.eventSeen = false
+    side.emptyOnly = true
 end
 
 local function StopSideScan()
-    scanCompleted, scanCompletionPending = false, false
+    -- Stop unfinished work without erasing the last successful full-scan result.
+    scanCompletionPending = false
     RefreshLastUpdate()
     market:Cancel()
     side.skipAfterDrain = false -- A native request cannot be recalled; keep any drain guard.
@@ -1101,6 +1120,7 @@ local function FinishNativeParityScan()
     ResetScanWait()
     scanCompletionPending = #ITEMS > 0 and side.successCount == #ITEMS
     scanCompleted = scanCompletionPending and not market:Busy()
+    if scanCompleted then scanCompletedAt = Timestamp() end
     scanCompletionPending = scanCompletionPending and not scanCompleted
     RefreshLastUpdate()
     if side.successCount > 0 then
@@ -1154,8 +1174,7 @@ end
 local function StartNativeParityScan()
     if settingsOpen or side.draining or state.auto ~= true or not AuctionVisible() or #ITEMS <= 0 then return end
     if not market:BeginPass() then return end
-    scanCompleted, scanCompletionPending = false, false
-    RefreshLastUpdate()
+    ClearScanCompletion()
     capture.pending = false
     side.active = true
     side.scanDoneThisOpen = false
@@ -1171,27 +1190,35 @@ end
 
 local function TryNativeParityRead()
     if not side.active or not side.waiting or not AuctionVisible() then return end
-    -- Timeout applies while waiting for the event too; do not read stale rows.
-    if side.waitElapsed >= SEARCH_QUERY_TIMEOUT_MS then
-        side.lastDiag = side.eventSeen and "result-timeout" or "no-completion-event"
-        if side.eventSeen then AdvanceNativeParityScan(false, "result-timeout") else DrainFailedNativeQuery() end
+    -- No event means the searched cache may still belong to an older request.
+    if not side.eventSeen then
+        if side.waitElapsed >= SEARCH_QUERY_TIMEOUT_MS then
+            side.lastDiag = "no-completion-event"
+            DrainFailedNativeQuery()
+        end
         return
     end
-    if not side.eventSeen then return end
+    local deadlineReached = side.waitElapsed >= SEARCH_QUERY_TIMEOUT_MS
     local delay = side.attempts == 0 and RESULT_READ_DELAY_MS or PASSIVE_RETRY_MS
-    if side.readElapsed < delay then return end
+    if side.readElapsed < delay and not deadlineReached then return end
     side.readElapsed = 0
     side.attempts = side.attempts + 1
 
-    local price, diag, info = PriceFromSearchedCache(side.index)
+    local price, diag, info, emptyRows = PriceFromSearchedCache(side.index)
+    if not emptyRows then side.emptyOnly = false end
     if tonumber(price) ~= nil and price > 0 then
         local candidate=ObserveMarket(side.index,info,price)
         RecordPrice(side.index, price)
         market:Offer(candidate)
         AdvanceNativeParityScan(true, "cache")
-    elseif side.attempts >= MAX_READ_ATTEMPTS then
+    elseif emptyRows and side.emptyOnly and deadlineReached and side.attempts >= 2 then
+        -- No price or Market request is invented for a completed empty search.
+        currentUnavailable[ITEMS[side.index].name] = true
+        RefreshRow(side.index)
+        AdvanceNativeParityScan(true, "no-listings")
+    elseif deadlineReached or (not emptyRows and side.attempts >= MAX_READ_ATTEMPTS) then
         side.lastDiag = diag
-        -- Completion was received; no usable row after bounded cache reads.
+        -- Invalid metadata/page/rows, or too little post-event readiness time.
         AdvanceNativeParityScan(false, "unavailable")
     end
 end
@@ -1325,6 +1352,16 @@ settingsButton:SetHandler("OnClick", function()
                     if side.active or capture.pending then return false, "settingsBusy" end
                     local valid, reason = FEATURES.ValidateItems(draft)
                     if not valid then return false, reason end
+                    local watchlistChanged = #draft ~= #ITEMS
+                    if not watchlistChanged then
+                        for index, item in ipairs(draft) do
+                            local current = ITEMS[index]
+                            if not current or item.name ~= current.name or item.id ~= current.id then
+                                watchlistChanged = true
+                                break
+                            end
+                        end
+                    end
                     if not clientSearchLanguage then
                         state.searchLanguage = searchLanguage == "KO" and "KO" or "EN"
                     end
@@ -1336,6 +1373,7 @@ settingsButton:SetHandler("OnClick", function()
                     -- delayed scan only when AUTO and the native AH are open.
                     side.scanDoneThisOpen = true
                     if not SaveState() then return false, storage.root and "storageFailed" or "storageInitialFailed" end
+                    if watchlistChanged then ClearScanCompletion() end
                     RefreshPage()
                     SetStatus(T("settingsSaved"))
                     return true
@@ -1541,6 +1579,7 @@ function scheduler:OnUpdate(dt)
     if not visible or settingsOpen then return end
     if scanCompletionPending and not side.active and not market:Busy() and state.auto == true then
         scanCompletionPending, scanCompleted = false, true
+        scanCompletedAt = Timestamp()
         RefreshLastUpdate()
     end
 
