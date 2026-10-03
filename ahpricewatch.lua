@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.1.3
+-- ArcheRage AH Price Watch v1.2.0
 -- AUTO performs one watchlist scan while the player has native AH open, then
 -- records native/manual searches. Settings and notifications are local only.
 -- Uses the enabled nine-argument SearchAuctionArticle and GetSearchedItem* APIs.
@@ -25,13 +25,15 @@ ADDON:ImportAPI(API_TYPE.AUCTION.id)
 local CONFIG = AH_PRICE_WATCH_CONFIG or {}
 local FEATURES = AH_PRICE_WATCH_FEATURES
 local CATALOG, UI = AH_PRICE_WATCH_CATALOG, AH_PRICE_WATCH_UI
+local VARIANTS = AH_PRICE_WATCH_VARIANTS
 local MARKET = AH_PRICE_WATCH_MARKET
+local OBSERVATIONS = AH_PRICE_WATCH_OBSERVATIONS
 local market
 local settingsOpen = false
 local ITEMS = CONFIG.items or {}
 local DEBUG = CONFIG.DEBUG == true
 local ALERT_COOLDOWN = math.max(0, tonumber(CONFIG.alertCooldownSeconds) or 1800)
-local VERSION = "1.1.3"
+local VERSION = "1.2.0"
 local storage = AH_PRICE_WATCH_STORAGE.New(ADDON)
 
 -- v073 reconstructs the existing in-memory shape from bounded component keys.
@@ -127,6 +129,11 @@ local I18N = {
         header7Avg = "7d Avg",
         header14Avg = "14d Avg", header14High = "14d High", headerVolume = "Volume",
         volumeHigh = "High", volumeNormal = "Normal", volumeLow = "Low", unavailable = "—",
+        localTitle = "LOCAL — Wrapped Serendipity Stone",
+        localSource = "LOCAL: Statistics from Current listing prices observed by AH Tracker.",
+        localNotMarket = "Not native Market statistics. Page 1; up to 50 rows.",
+        localPolicy = "Two successful full scans per hour; the current hour is excluded.",
+        localValues = "Avg: first observed price/hour. High: highest observed Current/hour.",
         header7High = "7d High",
         header30Avg = "30d Avg",
         header30High = "30d High",
@@ -201,6 +208,11 @@ local I18N = {
         header7Avg = "7日平均",
         header14Avg = "14日平均", header14High = "14日最高", headerVolume = "取引量",
         volumeHigh = "多い", volumeNormal = "普通", volumeLow = "少ない", unavailable = "—",
+        localTitle = "LOCAL — Wrapped Serendipity Stone",
+        localSource = "LOCAL: AH Trackerが観測したCurrent出品価格から生成した統計です。",
+        localNotMarket = "native Market統計ではありません。page 1・最大50行の観測です。",
+        localPolicy = "同hourの成功full scanを2回確認。現在進行中のhourは除外します。",
+        localValues = "平均: hour内の最初の価格。最高: 観測したCurrent価格の最大値。",
         header7High = "7日最高",
         header30Avg = "30日平均",
         header30High = "30日最高",
@@ -275,6 +287,11 @@ local I18N = {
         header7Avg = "7일 평균",
         header14Avg = "14일 평균", header14High = "14일 최고", headerVolume = "거래량",
         volumeHigh = "많음", volumeNormal = "보통", volumeLow = "적음", unavailable = "—",
+        localTitle = "LOCAL — Wrapped Serendipity Stone",
+        localSource = "LOCAL: AH Tracker가 관측한 Current 매물 가격으로 계산한 통계입니다.",
+        localNotMarket = "native Market 통계가 아닙니다. page 1, 최대 50개 행을 관측합니다.",
+        localPolicy = "같은 시간대의 성공한 전체 스캔 2회 확인. 진행 중인 시간대는 제외합니다.",
+        localValues = "평균: 시간대 첫 관측 가격. 최고: 관측한 Current 가격의 최댓값.",
         header7High = "7일 최고",
         header30Avg = "30일 평균",
         header30High = "30일 최고",
@@ -405,10 +422,16 @@ local function DayKey(ts)
     return tostring(math.floor((tonumber(ts) or 0) / 86400))
 end
 
+-- This feature is deliberately enabled only for the approved Wrapped group.
+local observationGroup = VARIANTS.ForItem({id=8001000}, "EN")
+local observations = OBSERVATIONS.New(state, observationGroup, SaveState)
+observations:Prune(Timestamp())
+
 local function FindWatchItemIndexByName(name, itemType)
     if type(name) ~= "string" then return nil end
     for i, item in ipairs(ITEMS) do
-        if CATALOG.Matches(item, name, itemType) then return i end
+        -- A passive page does not prove coverage of every allowed variant.
+        if not VARIANTS.ForItem(item, SearchLanguage()) and CATALOG.Matches(item, name, itemType) then return i end
     end
     return nil
 end
@@ -495,11 +518,22 @@ local function StatsFor(itemName, days, now)
     return out
 end
 
-local function MarketStatsFor(item, last)
+local currentWinnerByIndex = {} -- Session only; v073 has no logical item -> winner identity.
+local currentScanGeneration = 0
+local function MarketStatsFor(item, last, index)
+    -- Saved Market data has no provenance proof for these ambiguous callback names.
+    if VARIANTS.MarketBlocked(item) then return {} end
     local record=CATALOG.ForItem(item)
     local selected=record and state.marketSelected[record.id]
     if not selected or type(last)~="table" or selected.price~=last.price then return {} end
     return MARKET.Stats(state,record.id,selected.grade,MARKET.Today())
+end
+
+-- Display-only provider: SignalFor continues to use the original Market/Current rules.
+local function DisplayStatsFor(item,last,index,now)
+    local group=VARIANTS.ForItem(item,SearchLanguage())
+    if group==observationGroup and observations:Has() then return observations:Stats(now) end
+    return MarketStatsFor(item,last,index)
 end
 
 local function SignalFor(index, price, now)
@@ -515,7 +549,7 @@ local function SignalFor(index, price, now)
     end
 
     -- Same selected item/grade/price and calendar window as the displayed 14d Avg.
-    local marketAvg = MarketStatsFor(item, state.last[item.name]).avg14
+    local marketAvg = MarketStatsFor(item, state.last[item.name], index).avg14
     if marketAvg ~= nil then
         -- Integer percent arithmetic avoids floating-point boundary off-by-one.
         local great = math.floor(marketAvg / 100) * 85 + math.floor((marketAvg % 100) * 85 / 100)
@@ -685,6 +719,54 @@ lastUpdateLabel.style:SetFontSize(11)
 lastUpdateLabel.style:SetAlign(ALIGN_LEFT)
 lastUpdateLabel.style:SetColor(170, 170, 170, 255)
 
+local localHistoryButton = window:CreateChildWidget("button", "ahPriceWatchLocalHistoryButton", 0, true)
+localHistoryButton:SetStyle("text_default")
+localHistoryButton:SetExtent(PANEL_WIDTH-276,18)
+localHistoryButton:AddAnchor("TOPLEFT",window,264,bottomY+34)
+localHistoryButton.style:SetFontSize(11)
+UI.Inside(264,PANEL_WIDTH-276,PANEL_WIDTH,12)
+local localHistoryInfo = window:CreateChildWidget("window", "ahPriceWatchLocalHistoryInfo", 0, true)
+localHistoryInfo:SetExtent(PANEL_WIDTH-24,178)
+localHistoryInfo:AddAnchor("TOPLEFT",window,12,TABLE_TOP+6)
+local infoBackground=localHistoryInfo:CreateColorDrawable(0.06,0.08,0.12,0.98,"background")
+infoBackground:AddAnchor("TOPLEFT",localHistoryInfo,0,0)
+infoBackground:AddAnchor("BOTTOMRIGHT",localHistoryInfo,0,0)
+local localInfoLabels={}
+for i=1,6 do
+    local label=localHistoryInfo:CreateChildWidget("label","ahPriceWatchLocalInfo"..i,0,false)
+    label:SetExtent(PANEL_WIDTH-70,20)
+    label:AddAnchor("TOPLEFT",localHistoryInfo,12,8+(i-1)*26)
+    label.style:SetFontSize(i==1 and 13 or 11)
+    label.style:SetAlign(ALIGN_LEFT)
+    label.style:SetColor(225,230,240,255)
+    localInfoLabels[i]=label
+end
+local infoClose=localHistoryInfo:CreateChildWidget("button","ahPriceWatchLocalInfoClose",0,true)
+infoClose:SetStyle("text_default");infoClose:SetExtent(24,24)
+infoClose:AddAnchor("TOPRIGHT",localHistoryInfo,"TOPRIGHT",-8,4);infoClose:SetText("X")
+infoClose:SetHandler("OnClick",function() localHistoryInfo:Show(false) end)
+localHistoryInfo:Show(false)
+local function RefreshLocalHistory()
+    local visible=false
+    for _,item in ipairs(ITEMS) do
+        if VARIANTS.ForItem(item,SearchLanguage())==observationGroup then visible=true;break end
+    end
+    localHistoryButton:Show(visible)
+    if not visible then localHistoryInfo:Show(false);return end
+    local stats=observations:Stats(Timestamp())
+    local coverage=string.format("7d %d/168h | 14d %d/336h | 30d %d/720h",
+        stats.coverage7,stats.coverage14,stats.coverage30)
+    localHistoryButton:SetText("LOCAL: "..coverage.." [i]")
+    for i,key in ipairs({"localTitle","localSource","localNotMarket","localPolicy","localValues"}) do
+        localInfoLabels[i]:SetText(T(key))
+    end
+    localInfoLabels[6]:SetText(coverage)
+end
+localHistoryButton:SetHandler("OnClick",function()
+    RefreshLocalHistory();localHistoryInfo:Show(true);localHistoryInfo:Raise()
+end)
+local localObservationHour=OBSERVATIONS.Hour(Timestamp())
+
 local function RefreshLastUpdate()
     local latest = 0
     for _, item in ipairs(ITEMS) do
@@ -724,6 +806,17 @@ end
 local function ObserveMarket(index, info, price)
     local item=ITEMS[index];local record=CATALOG.ForItem(item)
     if not record then return nil end
+    local group=VARIANTS.ForItem(item,SearchLanguage())
+    if group then
+        currentWinnerByIndex[index]=nil
+        if type(info)~="table" then return nil end
+        local id,grade=rawget(info,"itemType"),rawget(info,"itemGrade")
+        if not VARIANTS.Matches(group,id) then return nil end
+        currentWinnerByIndex[index]={logicalKey=group.key,watchName=item.name,anchorId=record.id,
+            itemType=id,itemGrade=grade,price=price,scanGeneration=currentScanGeneration}
+        return nil -- Current-only until native callback attribution can be proven.
+    end
+    if VARIANTS.MarketBlocked(item) then return nil end
     state.marketSelected[record.id]=nil
     if type(info)~="table" then return nil end
     local id,grade=rawget(info,"itemType"),rawget(info,"itemGrade")
@@ -741,12 +834,13 @@ local function RefreshRow(index)
     if row == nil then return end
     for _, widget in pairs(row) do widget:Show(item ~= nil) end
     if item == nil then return end
-    row.name:SetText(UI.ItemText(CATALOG.ItemDisplayName(item, state.language)))
+    local displayName=CATALOG.ItemDisplayName(item,state.language)
+    row.name:SetText(UI.ItemText(displayName))
     row.name.style:SetColor(255, 255, 255, 255)
 
     local last = state.last[item.name]
     local now = Timestamp()
-    local stats = MarketStatsFor(item,last)
+    local stats = DisplayStatsFor(item,last,index,now)
     local target = CopperFromGold(item.targetGold)
 
     for _,field in ipairs({"avg7","high7","avg14","high14","avg30","high30"}) do
@@ -764,7 +858,7 @@ local function RefreshRow(index)
         row.now:SetText(TableMoneyText(price))
         row.signal:SetText(SignalText(signal))
         if signal == "BUY" or signal == "GREAT" or signal == "TARGET" then
-            row.name:SetText(UI.ItemText(CATALOG.ItemDisplayName(item, state.language)))
+            row.name:SetText(UI.ItemText(displayName))
             row.name.style:SetColor(140, 235, 150, 255)
         end
         if signal == "TARGET" or signal == "GREAT" then
@@ -793,6 +887,7 @@ local function RefreshRow(index)
 end
 
 local function RefreshAllRows()
+    RefreshLocalHistory()
     for i = 1, PAGE_SIZE do RefreshRow((tablePage - 1) * PAGE_SIZE + i) end
     for i = PAGE_SIZE + 1, UI.MAX_PAGE_SIZE do
         for _, widget in pairs(rows[i]) do widget:Show(false) end
@@ -821,9 +916,13 @@ local function RefreshAfterMarket()
     for index, item in ipairs(ITEMS) do
         local record = CATALOG.ForItem(item)
         local last = state.last[item.name]
-        local selected = record and state.marketSelected[record.id]
-        if record and record.id == pending.id and selected and selected.grade == pending.grade and
-            type(last) == "table" and MarketStatsFor(item,last).avg14 ~= nil then
+        local group = VARIANTS.ForItem(item, SearchLanguage())
+        local winner = group and currentWinnerByIndex[index]
+        local actualId = record and record.id
+        if group then actualId = winner and winner.itemType end
+        local selected = actualId and state.marketSelected[actualId]
+        if actualId == pending.id and selected and selected.grade == pending.grade and
+            type(last) == "table" and MarketStatsFor(item,last,index).avg14 ~= nil then
             MaybeAlert(index,last.price,Timestamp())
             changed = true
         end
@@ -832,10 +931,14 @@ local function RefreshAfterMarket()
 end
 
 market=MARKET.Requests({state=state,day=MARKET.Today,save=SaveState,refresh=RefreshAfterMarket,
-    send=function(id,grade) return X2Auction:AskMarketPrice(id,grade,true) end})
+    send=function(id,grade)
+        if VARIANTS.MarketBlocked({id=id}) then return false end
+        return X2Auction:AskMarketPrice(id,grade,true)
+    end})
 local marketReceiverOK=pcall(function()
     if not UIEVENT_TYPE.DIAGONAL_ASR or type(UIParent.SetEventHandler)~="function" then error("unavailable") end
     UIParent:SetEventHandler(UIEVENT_TYPE.DIAGONAL_ASR,function(name,grade,ui,payload)
+        if VARIANTS.MarketNameBlocked(name) then return end
         market:Receive(name,grade,ui,payload)
     end)
 end)
@@ -1056,6 +1159,7 @@ local side = {
 local function PriceFromSearchedCache(watchIndex)
     local item = ITEMS[watchIndex]
     if item == nil then return nil, "no-item" end
+    local group = VARIANTS.ForItem(item, SearchLanguage())
     local count, total, page
     local ok = pcall(function()
         count = X2Auction:GetSearchedItemCount()
@@ -1078,19 +1182,29 @@ local function PriceFromSearchedCache(watchIndex)
 
     local best, bestInfo = nil, nil
     local tables = 0
+    -- Only a fully read page of identified, same-name nonmembers proves group absence.
+    local unknownOnly = group ~= nil and count <= MAX_LISTINGS
     for idx = 1, math.min(count, MAX_LISTINGS) do
         local info = nil
         local okInfo = pcall(function() info = X2Auction:GetSearchedItemInfo(idx) end)
         if okInfo and type(info) == "table" then
             tables = tables + 1
             local listing = ExtractListing(info)
-            if listing ~= nil and CATALOG.Matches(item, listing.name, rawget(info, "itemType")) and tonumber(listing.unit) ~= nil and listing.unit > 0 then
+            local id = rawget(info, "itemType")
+            if unknownOnly and (type(id) ~= "number" or not validMetadataNumber(id) or id == 0 or
+                rawget(info, "name") ~= group.en or VARIANTS.Matches(group, id)) then
+                unknownOnly = false
+            end
+            local matches = listing and (group and VARIANTS.MatchesListing(group, rawget(info,"itemType"), listing.name) or
+                (not group and CATALOG.Matches(item, listing.name, rawget(info,"itemType"))))
+            if matches and tonumber(listing.unit) ~= nil and listing.unit > 0 then
                 if best == nil or listing.unit < best then best, bestInfo = listing.unit, info end
             end
         end
     end
     if tables < math.min(count, MAX_LISTINGS) then return nil, "incomplete-rows" end
     if best ~= nil then return best, "rows=" .. tostring(count) .. " tables=" .. tostring(tables), bestInfo end
+    if unknownOnly then return nil, "allowed-rows=0 unknown-rows=" .. tostring(count), nil, true end
     return nil, "rows=" .. tostring(count) .. " tables=" .. tostring(tables)
 end
 
@@ -1104,6 +1218,7 @@ local function ResetScanWait()
 end
 
 local function StopSideScan()
+    observations:Abort()
     -- Stop unfinished work without erasing the last successful full-scan result.
     scanCompletionPending = false
     RefreshLastUpdate()
@@ -1119,6 +1234,9 @@ local function FinishNativeParityScan()
     side.scanDoneThisOpen = true
     ResetScanWait()
     scanCompletionPending = #ITEMS > 0 and side.successCount == #ITEMS
+    local historyChanged=observations:Complete(currentScanGeneration,
+        scanCompletionPending and side.queryErrorCount==0,Timestamp())
+    if historyChanged then RefreshAllRows() end
     scanCompleted = scanCompletionPending and not market:Busy()
     if scanCompleted then scanCompletedAt = Timestamp() end
     scanCompletionPending = scanCompletionPending and not scanCompleted
@@ -1155,7 +1273,8 @@ local function IssueNativeParityQuery()
     local item = ITEMS[side.index]
     if item == nil then FinishNativeParityScan(); return end
 
-    local queryName = CATALOG.QueryName(item, SearchLanguage())
+    local group = VARIANTS.ForItem(item, SearchLanguage())
+    local queryName = group and group.en or CATALOG.QueryName(item, SearchLanguage())
     SetStatus(string.format(T("nativeScan"), item.name))
     -- Arm before the call so a synchronous completion cannot be discarded.
     ResetScanWait()
@@ -1175,6 +1294,9 @@ local function StartNativeParityScan()
     if settingsOpen or side.draining or state.auto ~= true or not AuctionVisible() or #ITEMS <= 0 then return end
     if not market:BeginPass() then return end
     ClearScanCompletion()
+    currentScanGeneration = currentScanGeneration + 1
+    observations:Begin(currentScanGeneration,Timestamp())
+    currentWinnerByIndex = {}
     capture.pending = false
     side.active = true
     side.scanDoneThisOpen = false
@@ -1208,11 +1330,16 @@ local function TryNativeParityRead()
     if not emptyRows then side.emptyOnly = false end
     if tonumber(price) ~= nil and price > 0 then
         local candidate=ObserveMarket(side.index,info,price)
+        local group=VARIANTS.ForItem(ITEMS[side.index],SearchLanguage())
+        if group==observationGroup then
+            observations:Stage(currentScanGeneration,group,currentWinnerByIndex[side.index],Timestamp())
+        end
         RecordPrice(side.index, price)
         market:Offer(candidate)
         AdvanceNativeParityScan(true, "cache")
     elseif emptyRows and side.emptyOnly and deadlineReached and side.attempts >= 2 then
         -- No price or Market request is invented for a completed empty search.
+        currentWinnerByIndex[side.index] = nil
         currentUnavailable[ITEMS[side.index].name] = true
         RefreshRow(side.index)
         AdvanceNativeParityScan(true, "no-listings")
@@ -1352,6 +1479,7 @@ settingsButton:SetHandler("OnClick", function()
                     if side.active or capture.pending then return false, "settingsBusy" end
                     local valid, reason = FEATURES.ValidateItems(draft)
                     if not valid then return false, reason end
+                    local previousSearchLanguage = SearchLanguage()
                     local watchlistChanged = #draft ~= #ITEMS
                     if not watchlistChanged then
                         for index, item in ipairs(draft) do
@@ -1373,6 +1501,9 @@ settingsButton:SetHandler("OnClick", function()
                     -- delayed scan only when AUTO and the native AH are open.
                     side.scanDoneThisOpen = true
                     if not SaveState() then return false, storage.root and "storageFailed" or "storageInitialFailed" end
+                    if watchlistChanged or previousSearchLanguage ~= SearchLanguage() then
+                        currentWinnerByIndex = {}
+                    end
                     if watchlistChanged then ClearScanCompletion() end
                     RefreshPage()
                     SetStatus(T("settingsSaved"))
@@ -1534,6 +1665,12 @@ function scheduler:OnUpdate(dt)
     local delta = tonumber(dt) or 0
     local visible = AuctionVisible()
     market:Tick(delta,visible and state.auto==true and not settingsOpen)
+    local hour=OBSERVATIONS.Hour(Timestamp())
+    if hour and hour~=localObservationHour then
+        localObservationHour=hour
+        observations:Prune(Timestamp())
+        RefreshAllRows() -- Closing an already confirmed hour adds no observation.
+    end
     if not visible then capture.pending = false end
 
     if capture.pending then

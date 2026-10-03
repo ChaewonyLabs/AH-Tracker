@@ -6,10 +6,12 @@
 config.lua
 item_catalog.lua
 catalog.lua
+variant_groups.lua
 pack_identity.lua
 features.lua
 persistence.lua
 market_history.lua
+current_observations.lua
 market_requests.lua
 ui_layout.lua
 settings.lua

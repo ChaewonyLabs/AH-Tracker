@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.1.3
+-- ArcheRage AH Price Watch v1.2.0
 --
 -- AUTO scans once while the player has native AH open, then captures manual
 -- searches. Uses enabled SearchAuctionArticle (9 arguments, all-grade filter 1).
