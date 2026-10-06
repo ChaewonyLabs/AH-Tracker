@@ -80,6 +80,8 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
     label("SearchLanguageLabel", "searchLanguage", 450, 238, 402)
     local searchLanguageButton = button("SearchLanguage", nil, 450, 266, 196)
     local searchLanguageSource = label("SearchLanguageSource", nil, 656, 268, 196)
+    local completionSoundButton = button("CompletionSound", nil, LIST_X, 280, LIST_WIDTH)
+    local draftCompletionSound = false
     local draftSearchLanguage, automaticSearchLanguage = "EN", false
     local listButtons = {}
     local draft, selected, page = {}, nil, 1
@@ -130,6 +132,7 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
     refresh = function()
         for _, entry in ipairs(labels) do entry.widget:SetText(T(entry.key)) end
         editorTitle:SetText(T(selected and "editSelected" or "newEditor"))
+        completionSoundButton:SetText(T("autoCompletionSound") .. ": " .. (draftCompletionSound and "ON" or "OFF"))
         searchLanguageButton:SetText(draftSearchLanguage == "KO" and "한국어" or "English")
         searchLanguageButton:Enable(not automaticSearchLanguage)
         searchLanguageSource:SetText(T(automaticSearchLanguage and "searchLanguageAuto" or "searchLanguageManual"))
@@ -236,6 +239,10 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
         panel:Show(false)
         context.visibility(false)
     end
+    completionSoundButton:SetHandler("OnClick", function()
+        draftCompletionSound = not draftCompletionSound
+        refresh()
+    end)
     searchLanguageButton:SetHandler("OnClick", function()
         if automaticSearchLanguage then return end
         draftSearchLanguage = draftSearchLanguage == "EN" and "KO" or "EN"
@@ -252,7 +259,7 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
         -- Preserve auto-apply for the selected target. New candidates require
         -- an explicit Add Item click and are never silently added by Save.
         if selected and not applyTarget() then return end
-        local ok, err = context.save(draft, draftSearchLanguage)
+        local ok, err = context.save(draft, draftSearchLanguage, draftCompletionSound)
         if not ok then message:SetText(T(err)); return end
         hide()
     end)
@@ -274,6 +281,7 @@ function AH_PRICE_WATCH_CREATE_SETTINGS(parent, context)
             dropdown:Show(false)
             draft, page = F.CopyItems(context.items()), 1
             draftSearchLanguage, automaticSearchLanguage = context.searchLanguage()
+            draftCompletionSound = context.completionSound() == true
             clearEditor()
             refresh()
             message:SetText(T("draftHint"))

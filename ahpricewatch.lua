@@ -1,4 +1,4 @@
--- ArcheRage AH Price Watch v1.2.0
+-- ArcheRage AH Price Watch v1.3.0
 -- AUTO performs one watchlist scan while the player has native AH open, then
 -- records native/manual searches. Settings and notifications are local only.
 -- Uses the enabled nine-argument SearchAuctionArticle and GetSearchedItem* APIs.
@@ -21,6 +21,11 @@ ADDON:ImportObject(OBJECT_TYPE.WINDOW)
 ADDON:ImportObject(OBJECT_TYPE.LABEL)
 ADDON:ImportAPI(API_TYPE.CHAT.id)
 ADDON:ImportAPI(API_TYPE.AUCTION.id)
+-- Optional UI sound API: import failure must not stop the scan engine.
+local soundAPIReady = false
+if API_TYPE.SOUND and type(API_TYPE.SOUND.id) == "number" then
+    soundAPIReady = pcall(function() ADDON:ImportAPI(API_TYPE.SOUND.id) end)
+end
 
 local CONFIG = AH_PRICE_WATCH_CONFIG or {}
 local FEATURES = AH_PRICE_WATCH_FEATURES
@@ -33,7 +38,7 @@ local settingsOpen = false
 local ITEMS = CONFIG.items or {}
 local DEBUG = CONFIG.DEBUG == true
 local ALERT_COOLDOWN = math.max(0, tonumber(CONFIG.alertCooldownSeconds) or 1800)
-local VERSION = "1.2.0"
+local VERSION = "1.3.0"
 local storage = AH_PRICE_WATCH_STORAGE.New(ADDON)
 
 -- v073 reconstructs the existing in-memory shape from bounded component keys.
@@ -82,7 +87,9 @@ for name, last in pairs(state.last) do
             notified = { [last.alertSignal] = { price = last.price, time = tonumber(last.time) or 0 } } }
     end
 end
-if state.auto == nil then state.auto = false end
+-- AUTO is session-only: never restore a previous session's enabled flag.
+state.auto = false
+state.autoCompletionSound = state.autoCompletionSound == true
 state.tableVisible = false
 if state.language ~= "JA" and state.language ~= "KO" and state.language ~= "EN" then
     state.language = tostring(CONFIG.defaultLanguage or "EN")
@@ -110,7 +117,12 @@ end
 local storageFailureNotified = false
 local notifyStorageFailure
 local function SaveState()
-    local ok = storage:Save(state)
+    -- Keep the live session flag out of v073 without changing other saved fields.
+    local saved = {}
+    for key, value in pairs(state) do
+        if key ~= "auto" then saved[key] = value end
+    end
+    local ok = storage:Save(saved)
     if not ok and notifyStorageFailure and not storageFailureNotified then
         storageFailureNotified = true
         notifyStorageFailure()
@@ -142,6 +154,7 @@ local I18N = {
         lastUpdate = "Updated",
         scanComplete = "Scan complete",
         autoOn = "Update on AH Open: ON",
+        autoCompletionSound = "AUTO Completion Sound",
         autoOff = "Update on AH Open: OFF",
         lang = "LANG: EN",
         off = "OFF",
@@ -221,6 +234,7 @@ local I18N = {
         lastUpdate = "最終更新",
         scanComplete = "スキャン完了",
         autoOn = "AH起動時更新: ON",
+        autoCompletionSound = "AUTO完了音",
         autoOff = "AH起動時更新: OFF",
         lang = "言語: 日本語",
         off = "無効",
@@ -300,6 +314,7 @@ local I18N = {
         lastUpdate = "최근 갱신",
         scanComplete = "스캔 완료",
         autoOn = "AH 열 때 갱신: ON",
+        autoCompletionSound = "AUTO 완료음",
         autoOff = "AH 열 때 갱신: OFF",
         lang = "언어: 한국어",
         off = "꺼짐",
@@ -711,6 +726,8 @@ for i = 1, UI.MAX_PAGE_SIZE do
 end
 
 local scanCompleted, scanCompletionPending, scanCompletedAt = false, false, nil
+-- Actual full-scan origin and completion consumption are session-local only.
+local autoCompletion = { generation = 0, origin = nil, eligible = false, handled = 0 }
 local currentUnavailable = {} -- Session-local display state; retain saved price history.
 local lastUpdateLabel = window:CreateChildWidget("label", "ahPriceWatchLastUpdate", 0, false)
 lastUpdateLabel:SetExtent(240, 18)
@@ -780,6 +797,7 @@ local function RefreshLastUpdate()
 end
 
 local function ClearScanCompletion()
+    autoCompletion.eligible = false
     scanCompleted, scanCompletionPending, scanCompletedAt = false, false, nil
     RefreshLastUpdate()
 end
@@ -1217,7 +1235,33 @@ local function ResetScanWait()
     side.emptyOnly = true
 end
 
+local function PlayAutoCompletionSound()
+    if state.autoCompletionSound ~= true or not soundAPIReady then return end
+    -- No return-value contract, retry, save or core state mutation.
+    pcall(function()
+        if X2Sound ~= nil and type(X2Sound.PlayUISound) == "function" then
+            X2Sound:PlayUISound("event_commercial_mail_alarm")
+        end
+    end)
+end
+
+local function FinalizeSuccessfulScan(generation)
+    if not scanCompletionPending or side.active or market:Busy() or state.auto ~= true or
+        settingsOpen or not AuctionVisible() or type(generation) ~= "number" or generation <= 0 or
+        generation ~= currentScanGeneration or generation ~= autoCompletion.generation or
+        autoCompletion.handled == generation then return false end
+    local play = autoCompletion.origin == "AUTO" and autoCompletion.eligible
+    -- Consume before UI refresh/API call, including OFF and unavailable sound.
+    autoCompletion.handled, autoCompletion.eligible = generation, false
+    scanCompletionPending, scanCompleted = false, true
+    scanCompletedAt = Timestamp()
+    RefreshLastUpdate()
+    if play then PlayAutoCompletionSound() end
+    return true
+end
+
 local function StopSideScan()
+    autoCompletion.eligible = false
     observations:Abort()
     -- Stop unfinished work without erasing the last successful full-scan result.
     scanCompletionPending = false
@@ -1237,10 +1281,9 @@ local function FinishNativeParityScan()
     local historyChanged=observations:Complete(currentScanGeneration,
         scanCompletionPending and side.queryErrorCount==0,Timestamp())
     if historyChanged then RefreshAllRows() end
-    scanCompleted = scanCompletionPending and not market:Busy()
-    if scanCompleted then scanCompletedAt = Timestamp() end
-    scanCompletionPending = scanCompletionPending and not scanCompleted
-    RefreshLastUpdate()
+    scanCompleted = false
+    if not scanCompletionPending then autoCompletion.eligible = false end
+    if not FinalizeSuccessfulScan(currentScanGeneration) then RefreshLastUpdate() end
     if side.successCount > 0 then
         SetStatus(string.format(T("nativeDone"), side.successCount, #ITEMS))
     else
@@ -1295,6 +1338,7 @@ local function StartNativeParityScan()
     if not market:BeginPass() then return end
     ClearScanCompletion()
     currentScanGeneration = currentScanGeneration + 1
+    autoCompletion.generation, autoCompletion.origin, autoCompletion.eligible = currentScanGeneration, "AUTO", true
     observations:Begin(currentScanGeneration,Timestamp())
     currentWinnerByIndex = {}
     capture.pending = false
@@ -1455,6 +1499,7 @@ settingsButton:SetHandler("OnClick", function()
                 searchLanguage = function() return SearchLanguage(), clientSearchLanguage ~= nil end,
                 visibility = SetSettingsOpen,
                 items = function() return ITEMS end,
+                completionSound = function() return state.autoCompletionSound end,
                 canonicalName = function(name)
                     -- Reuse exact English spelling for known/previously removed
                     -- items, preserving their name-keyed history on re-addition.
@@ -1475,7 +1520,7 @@ settingsButton:SetHandler("OnClick", function()
                     end
                     return name
                 end,
-                save = function(draft, searchLanguage)
+                save = function(draft, searchLanguage, completionSound)
                     if side.active or capture.pending then return false, "settingsBusy" end
                     local valid, reason = FEATURES.ValidateItems(draft)
                     if not valid then return false, reason end
@@ -1500,7 +1545,12 @@ settingsButton:SetHandler("OnClick", function()
                     -- No request is made here. Closing settings schedules a
                     -- delayed scan only when AUTO and the native AH are open.
                     side.scanDoneThisOpen = true
-                    if not SaveState() then return false, storage.root and "storageFailed" or "storageInitialFailed" end
+                    local previousCompletionSound = state.autoCompletionSound
+                    state.autoCompletionSound = completionSound == true
+                    if not SaveState() then
+                        state.autoCompletionSound = previousCompletionSound
+                        return false, storage.root and "storageFailed" or "storageInitialFailed"
+                    end
                     if watchlistChanged or previousSearchLanguage ~= SearchLanguage() then
                         currentWinnerByIndex = {}
                     end
@@ -1715,9 +1765,7 @@ function scheduler:OnUpdate(dt)
     end
     if not visible or settingsOpen then return end
     if scanCompletionPending and not side.active and not market:Busy() and state.auto == true then
-        scanCompletionPending, scanCompleted = false, true
-        scanCompletedAt = Timestamp()
-        RefreshLastUpdate()
+        FinalizeSuccessfulScan(autoCompletion.generation)
     end
 
     if state.auto == true and not side.active and not side.scanDoneThisOpen then
